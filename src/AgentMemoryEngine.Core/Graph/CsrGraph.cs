@@ -199,4 +199,58 @@ public sealed class CsrGraph
 
         return Math.Clamp(maxProximity, 0.0f, 1.0f);
     }
+
+    /// <summary>
+    /// Computes Spreading Activation energy across multi-hop relationships from seed nodes.
+    /// Simulates cognitive associative memory retrieval (ACT-R cognitive architecture).
+    /// </summary>
+    public Dictionary<uint, float> ComputeSpreadingActivation(
+        IReadOnlyList<uint> seedNodes,
+        int maxHops = 3,
+        float decayFactor = 0.85f,
+        float minActivation = 0.05f)
+    {
+        var activationMap = new Dictionary<uint, float>();
+        if (seedNodes.Count == 0) return activationMap;
+
+        var currentWave = new Dictionary<uint, float>();
+        foreach (var seed in seedNodes)
+        {
+            if (seed > 0 && seed <= NodeCount)
+            {
+                currentWave[seed] = 1.0f;
+                activationMap[seed] = 1.0f;
+            }
+        }
+
+        for (int hop = 1; hop <= maxHops; hop++)
+        {
+            var nextWave = new Dictionary<uint, float>();
+
+            foreach (var (nodeId, energy) in currentWave)
+            {
+                var neighbors = GetNeighbors(nodeId);
+                for (int i = 0; i < neighbors.Length; i++)
+                {
+                    uint targetId = neighbors.Targets[i];
+                    float edgeWeight = neighbors.Meta[i].Weight / 100.0f;
+                    float propagatedEnergy = energy * edgeWeight * decayFactor;
+
+                    if (propagatedEnergy >= minActivation)
+                    {
+                        float existing = nextWave.GetValueOrDefault(targetId, 0.0f);
+                        nextWave[targetId] = Math.Max(existing, propagatedEnergy);
+
+                        float totalExisting = activationMap.GetValueOrDefault(targetId, 0.0f);
+                        activationMap[targetId] = Math.Max(totalExisting, propagatedEnergy);
+                    }
+                }
+            }
+
+            if (nextWave.Count == 0) break;
+            currentWave = nextWave;
+        }
+
+        return activationMap;
+    }
 }
