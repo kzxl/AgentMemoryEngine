@@ -38,6 +38,11 @@ public static class Program
                 case "mcp":
                     return await HandleMcpAsync(args);
 
+                case "studio":
+                case "ui":
+                case "serve":
+                    return await HandleStudioAsync(args);
+
                 default:
                     Console.Error.WriteLine($"[Error] Unknown command '{command}'. Use --help for usage.");
                     return 1;
@@ -226,6 +231,31 @@ public static class Program
         return 0;
     }
 
+    private static async Task<int> HandleStudioAsync(string[] args)
+    {
+        if (args.Length < 2)
+        {
+            Console.Error.WriteLine("[Usage] ame studio <database_path.ame> [--port 8989]");
+            return 1;
+        }
+
+        string dbPath = args[1];
+        int port = 8989;
+
+        for (int i = 2; i < args.Length; i++)
+        {
+            if (args[i] == "--port" && i + 1 < args.Length)
+            {
+                port = int.Parse(args[++i]);
+            }
+        }
+
+        using var container = File.Exists(dbPath) ? AmeContainer.Open(dbPath) : AmeContainer.Create(dbPath);
+        var studio = new StudioServer(container, port);
+        await studio.StartAsync();
+        return 0;
+    }
+
     private static void PrintUsage()
     {
         Console.WriteLine(@"
@@ -238,6 +268,7 @@ Usage:
   ame touch <database.ame> <memory_id> [--importance 90] [--confidence 100]
   ame inspect <database.ame>
   ame mcp <database.ame>
+  ame studio <database.ame> [--port 8989]
 ");
     }
 }
