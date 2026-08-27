@@ -59,6 +59,19 @@ public sealed unsafe class AmeContainer : IDisposable
     private readonly List<AmeSegmentDescriptor> _segments = [];
     private AmeVectorHeader _vectorHeader;
     
+    /// <summary>
+    /// In-memory Compressed Sparse Row (CSR) relationship graph.
+    /// </summary>
+    public AgentMemoryEngine.Core.Graph.CsrGraph Graph { get; } = new();
+
+    /// <summary>
+    /// Adds a relationship edge between two nodes in the graph.
+    /// </summary>
+    public void AddRelationship(uint sourceNodeId, uint targetNodeId, AmeEdgeType edgeType, byte weight = 100)
+    {
+        Graph.AddEdge(sourceNodeId, targetNodeId, edgeType, weight);
+    }
+    
     // Internal offsets
     private long _cognitiveArrayOffset;
     private long _vectorIndexOffset;
@@ -356,7 +369,7 @@ public sealed unsafe class AmeContainer : IDisposable
     }
 
     /// <summary>
-    /// Executes a Single-Pass Fused Search across quantized vectors, Ebbinghaus decay, and cognitive metrics.
+    /// Executes a Single-Pass Fused Search across quantized vectors, Ebbinghaus decay, cognitive metrics, and graph proximity.
     /// Defers payload decompression until Top-K selection to achieve sub-millisecond latency.
     /// </summary>
     public IReadOnlyList<AmeSearchResult> QueryFused(
@@ -364,6 +377,7 @@ public sealed unsafe class AmeContainer : IDisposable
         uint topK = 5,
         float minScore = 0.0f,
         byte targetTierMask = 0xFF,
+        ReadOnlySpan<uint> activeSymbols = default,
         AmeScoringWeights? weights = null)
     {
         uint totalRecords = RecordCount;
@@ -405,12 +419,15 @@ public sealed unsafe class AmeContainer : IDisposable
             // Compute Ebbinghaus retention
             float retention = AmeScoringEngine.ComputeRetention(rec, currentTimestamp);
 
+            // Compute graph proximity if active symbols provided
+            float graphProx = activeSymbols.IsEmpty ? 0.0f : Graph.ComputeProximity(rec.MemoryId, activeSymbols);
+
             // Compute composite score in single-pass
             float compositeScore = AmeScoringEngine.ComputeCompositeScore(
                 vecSim,
                 rec,
                 currentTimestamp,
-                graphProximity: 0.0f,
+                graphProximity: graphProx,
                 weights: weights);
 
             if (compositeScore < minScore)
