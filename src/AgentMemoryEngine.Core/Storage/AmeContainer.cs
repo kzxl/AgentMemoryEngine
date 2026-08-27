@@ -18,6 +18,7 @@ public record AmeSearchResult
     public float CompositeScore { get; init; }
     public float VectorSimilarity { get; init; }
     public float RecencyRetention { get; init; }
+    public float GraphProximity { get; init; }
     public byte Importance { get; init; }
     public byte Confidence { get; init; }
     public uint AccessFrequency { get; init; }
@@ -34,6 +35,7 @@ internal readonly record struct AmeCandidate(
     float CompositeScore,
     float VectorSimilarity,
     float RecencyRetention,
+    float GraphProximity,
     byte Importance,
     byte Confidence,
     uint AccessFrequency,
@@ -455,6 +457,7 @@ public sealed unsafe class AmeContainer : IDisposable
                 CompositeScore: compositeScore,
                 VectorSimilarity: vecSim,
                 RecencyRetention: retention,
+                GraphProximity: graphProx,
                 Importance: rec.Importance,
                 Confidence: rec.Confidence,
                 AccessFrequency: rec.AccessFrequency,
@@ -497,6 +500,7 @@ public sealed unsafe class AmeContainer : IDisposable
                 CompositeScore = c.CompositeScore,
                 VectorSimilarity = c.VectorSimilarity,
                 RecencyRetention = c.RecencyRetention,
+                GraphProximity = c.GraphProximity,
                 Importance = c.Importance,
                 Confidence = c.Confidence,
                 AccessFrequency = c.AccessFrequency,
