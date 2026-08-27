@@ -101,17 +101,38 @@ public static class Program
         string queryText = args[2];
         uint topK = 5;
         float minScore = 0.1f;
+        bool jsonOutput = false;
 
         for (int i = 3; i < args.Length; i++)
         {
             if (args[i] == "--top" && i + 1 < args.Length) topK = uint.Parse(args[++i]);
             if (args[i] == "--min-score" && i + 1 < args.Length) minScore = float.Parse(args[++i]);
+            if (args[i] == "--json") jsonOutput = true;
         }
 
         using var container = AmeContainer.Open(dbPath);
         float[] queryVec = McpServer.CreateDeterministicVector(queryText, container.Dimension);
 
         var results = container.QueryFused(queryVec, topK: topK, minScore: minScore);
+
+        if (jsonOutput)
+        {
+            var jsonList = results.Select(r => new
+            {
+                memoryId = r.MemoryId,
+                tier = r.Tier.ToString(),
+                compositeScore = r.CompositeScore,
+                vectorSimilarity = r.VectorSimilarity,
+                recencyRetention = r.RecencyRetention,
+                graphProximity = r.GraphProximity,
+                importance = r.Importance,
+                confidence = r.Confidence,
+                accessFrequency = r.AccessFrequency,
+                payload = r.Payload
+            });
+            Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(jsonList, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+            return 0;
+        }
 
         Console.WriteLine($"--- AME Fused Retrieval: Found {results.Count} matches ---");
         foreach (var r in results)
@@ -127,7 +148,7 @@ public static class Program
     {
         if (args.Length < 3)
         {
-            Console.Error.WriteLine("[Usage] ame post <database_path.ame> \"[Symptom] | [Cause] | [Fix]\" [--tier Episodic] [--importance 80] [--confidence 100]");
+            Console.Error.WriteLine("[Usage] ame post <database_path.ame> \"[Symptom] | [Cause] | [Fix]\" [--tier Episodic] [--importance 80] [--confidence 100] [--json]");
             return 1;
         }
 
@@ -136,12 +157,27 @@ public static class Program
         AmeMemoryTier tier = AmeMemoryTier.Episodic;
         byte importance = 80;
         byte confidence = 100;
+        bool jsonOutput = false;
 
         for (int i = 3; i < args.Length; i++)
         {
-            if (args[i] == "--tier" && i + 1 < args.Length) tier = Enum.Parse<AmeMemoryTier>(args[++i], true);
-            if (args[i] == "--importance" && i + 1 < args.Length) importance = byte.Parse(args[++i]);
-            if (args[i] == "--confidence" && i + 1 < args.Length) confidence = byte.Parse(args[++i]);
+            if (args[i] == "--tier" && i + 1 < args.Length)
+            {
+                if (Enum.TryParse<AmeMemoryTier>(args[++i], true, out var parsedTier))
+                    tier = parsedTier;
+            }
+            else if (args[i] == "--importance" && i + 1 < args.Length)
+            {
+                importance = byte.Parse(args[++i]);
+            }
+            else if (args[i] == "--confidence" && i + 1 < args.Length)
+            {
+                confidence = byte.Parse(args[++i]);
+            }
+            else if (args[i] == "--json")
+            {
+                jsonOutput = true;
+            }
         }
 
         using var container = AmeContainer.Open(dbPath);
@@ -155,7 +191,13 @@ public static class Program
             confidence: confidence,
             decayRate: (byte)(tier == AmeMemoryTier.Semantic ? 0 : 128));
 
-        Console.WriteLine($"[AME] Successfully harvested memory #{id} into tier [{tier}].");
+        if (jsonOutput)
+        {
+            Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new { success = true, memoryId = id, tier = tier.ToString() }));
+            return 0;
+        }
+
+        Console.WriteLine($"[AME] Successfully harvested memory #{id} [Tier: {tier}, Importance: {importance}, Confidence: {confidence}%].");
         return 0;
     }
 

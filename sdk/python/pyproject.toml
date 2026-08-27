@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-memory-engine"
+version = "1.0.0"
+authors = [
+  { name="Agent Memory Engine Contributors" },
+]
+description = "Official Python SDK for Agent Memory Engine (AME)"
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/kzxl/AgentMemoryEngine"
