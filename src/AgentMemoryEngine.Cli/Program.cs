@@ -44,6 +44,10 @@ public static class Program
                 case "index":
                     return HandleIndex(args);
 
+                case "bench":
+                case "benchmark":
+                    return HandleBench(args);
+
                 case "studio":
                 case "ui":
                 case "serve":
@@ -326,6 +330,32 @@ public static class Program
         return 0;
     }
 
+    private static int HandleBench(string[] args)
+    {
+        string dbPath = "benchmark_100mb.ame";
+        int records = 60000;
+        int queries = 100;
+
+        for (int i = 1; i < args.Length; i++)
+        {
+            if (args[i] == "--records" && i + 1 < args.Length)
+            {
+                records = int.Parse(args[++i]);
+            }
+            else if (args[i] == "--queries" && i + 1 < args.Length)
+            {
+                queries = int.Parse(args[++i]);
+            }
+            else if (!args[i].StartsWith("--"))
+            {
+                dbPath = args[i];
+            }
+        }
+
+        BenchmarkRunner.Run(dbPath, records, 384, queries);
+        return 0;
+    }
+
     private static void PrintUsage()
     {
         Console.WriteLine(@"
@@ -337,6 +367,7 @@ Usage:
   ame post <database.ame> ""<symptom> | <cause> | <fix>"" [--tier Episodic] [--importance 80] [--confidence 100]
   ame touch <database.ame> <memory_id> [--importance 90] [--confidence 100]
   ame index <database.ame> <source_dir_or_file>
+  ame bench [benchmark.ame] [--records 60000] [--queries 100]
   ame inspect <database.ame>
   ame mcp <database.ame>
   ame ipc <database.ame> [--pipe ame_pipe]

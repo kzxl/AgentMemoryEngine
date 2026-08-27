@@ -99,16 +99,11 @@ public sealed unsafe class AmeContainer : IDisposable
     public static AmeContainer Create(
         string filePath,
         ushort dimension = 384,
-        AmeQuantizationType quantization = AmeQuantizationType.Int8SQ8)
+        AmeQuantizationType quantization = AmeQuantizationType.Int8SQ8,
+        long initialCapacity = 1024 * 1024)
     {
-        string? dir = Path.GetDirectoryName(filePath);
-        if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-        {
-            Directory.CreateDirectory(dir);
-        }
-
-        // Initialize empty file with default segment capacity (1MB initial size)
-        long initialCapacity = 1024 * 1024; // 1MB
+        if (File.Exists(filePath))
+            File.Delete(filePath);
 
         using (var fs = new FileStream(filePath, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite))
         {
@@ -133,9 +128,16 @@ public sealed unsafe class AmeContainer : IDisposable
 
             // 2. Write Segment Table (3 Descriptors = 96 bytes)
             long segmentTableOffset = AmeConstants.GlobalHeaderSize;
-            long cognitiveOffset = 512; // 64-byte aligned
-            long vectorOffset = 131072; // 128KB
-            long payloadOffset = 524288; // 512KB
+            long cognitiveOffset = 1024; // 64-byte aligned
+            
+            // Calculate proportional offsets based on initialCapacity
+            long vectorOffset = initialCapacity > 10 * 1024 * 1024 
+                ? 4 * 1024 * 1024 // 4MB for cognitive records (up to 120k records)
+                : 131072; // 128KB default
+
+            long payloadOffset = initialCapacity > 10 * 1024 * 1024
+                ? 30 * 1024 * 1024 // 30MB offset (26MB for vectors = up to 65k vectors)
+                : 524288; // 512KB default
 
             var segCognitive = new AmeSegmentDescriptor
             {
