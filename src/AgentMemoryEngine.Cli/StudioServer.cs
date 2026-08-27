@@ -134,11 +134,27 @@ public sealed class StudioServer
                     compositeScore = r.CompositeScore,
                     similarity = r.VectorSimilarity,
                     retention = r.RecencyRetention,
+                    graphProximity = r.GraphProximity,
                     accessFrequency = r.AccessFrequency,
                     payload = r.Payload
                 });
 
                 await SendJsonAsync(response, list);
+            }
+            else if (request.HttpMethod == "POST" && path == "/api/prompt-budget")
+            {
+                using var reader = new StreamReader(request.InputStream, Encoding.UTF8);
+                string body = await reader.ReadToEndAsync();
+                var json = JsonNode.Parse(body)?.AsObject();
+
+                string query = json?["query"]?.GetValue<string>() ?? string.Empty;
+                int tokenBudget = json?["budget"]?.GetValue<int?>() ?? 1000;
+
+                float[] queryVec = McpServer.CreateDeterministicVector(query, _container.Dimension);
+                var results = _container.QueryFused(queryVec, topK: 15, minScore: 0.05f);
+
+                var budgetResult = AgentMemoryEngine.Core.Budgeting.ContextBudgeter.BuildPromptContext(results, maxTokenBudget: tokenBudget);
+                await SendJsonAsync(response, budgetResult);
             }
             else if (request.HttpMethod == "POST" && path == "/api/post")
             {
@@ -179,6 +195,11 @@ public sealed class StudioServer
             {
                 var worker = new ConsolidationWorker(_container);
                 var report = worker.ExecuteSweep();
+                await SendJsonAsync(response, report);
+            }
+            else if (request.HttpMethod == "POST" && path == "/api/vacuum")
+            {
+                var report = StorageCompactor.Compact(_container);
                 await SendJsonAsync(response, report);
             }
             else
