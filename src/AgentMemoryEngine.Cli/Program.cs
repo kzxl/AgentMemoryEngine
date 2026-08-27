@@ -38,6 +38,12 @@ public static class Program
                 case "mcp":
                     return await HandleMcpAsync(args);
 
+                case "ipc":
+                    return await HandleIpcAsync(args);
+
+                case "index":
+                    return HandleIndex(args);
+
                 case "studio":
                 case "ui":
                 case "serve":
@@ -256,6 +262,70 @@ public static class Program
         return 0;
     }
 
+    private static async Task<int> HandleIpcAsync(string[] args)
+    {
+        if (args.Length < 2)
+        {
+            Console.Error.WriteLine("[Usage] ame ipc <database_path.ame> [--pipe ame_pipe]");
+            return 1;
+        }
+
+        string dbPath = args[1];
+        string pipeName = "ame_pipe";
+
+        for (int i = 2; i < args.Length; i++)
+        {
+            if (args[i] == "--pipe" && i + 1 < args.Length)
+            {
+                pipeName = args[++i];
+            }
+        }
+
+        using var container = File.Exists(dbPath) ? AmeContainer.Open(dbPath) : AmeContainer.Create(dbPath);
+        var ipc = new IpcServer(container, pipeName);
+        await ipc.StartAsync();
+        return 0;
+    }
+
+    private static int HandleIndex(string[] args)
+    {
+        if (args.Length < 3)
+        {
+            Console.Error.WriteLine("[Usage] ame index <database_path.ame> <source_dir_or_file>");
+            return 1;
+        }
+
+        string dbPath = args[1];
+        string targetPath = args[2];
+
+        using var container = File.Exists(dbPath) ? AmeContainer.Open(dbPath) : AmeContainer.Create(dbPath);
+        var indexer = new AgentMemoryEngine.Core.Indexer.AstIndexer(container);
+
+        var files = Directory.Exists(targetPath)
+            ? Directory.GetFiles(targetPath, "*.*", SearchOption.AllDirectories)
+                .Where(f => f.EndsWith(".cs") || f.EndsWith(".ts") || f.EndsWith(".py") || f.EndsWith(".sql") || f.EndsWith(".js"))
+                .ToArray()
+            : [targetPath];
+
+        int totalSymbols = 0;
+        foreach (var file in files)
+        {
+            try
+            {
+                string text = File.ReadAllText(file);
+                var created = indexer.IndexFile(file, text);
+                totalSymbols += created.Count;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[Warning] Failed to index {file}: {ex.Message}");
+            }
+        }
+
+        Console.WriteLine($"[AME AST] Indexed {files.Length} files and extracted {totalSymbols} symbols into Project Memory.");
+        return 0;
+    }
+
     private static void PrintUsage()
     {
         Console.WriteLine(@"
@@ -266,8 +336,10 @@ Usage:
   ame query <database.ame> ""<query text>"" [--top 5] [--min-score 0.1]
   ame post <database.ame> ""<symptom> | <cause> | <fix>"" [--tier Episodic] [--importance 80] [--confidence 100]
   ame touch <database.ame> <memory_id> [--importance 90] [--confidence 100]
+  ame index <database.ame> <source_dir_or_file>
   ame inspect <database.ame>
   ame mcp <database.ame>
+  ame ipc <database.ame> [--pipe ame_pipe]
   ame studio <database.ame> [--port 8989]
 ");
     }

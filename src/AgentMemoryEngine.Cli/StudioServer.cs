@@ -199,7 +199,7 @@ public sealed class StudioServer
         }
     }
 
-    private static async Task SendJsonAsync(HttpResponse response, object data)
+    private static async Task SendJsonAsync(HttpListenerResponse response, object data)
     {
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(data, new JsonSerializerOptions { WriteIndented = true });
         response.ContentType = "application/json; charset=utf-8";
