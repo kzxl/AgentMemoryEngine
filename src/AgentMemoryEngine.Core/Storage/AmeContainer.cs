@@ -388,8 +388,17 @@ public sealed unsafe class AmeContainer : IDisposable
     }
 
     /// <summary>
+    /// Flushes all dirty memory-mapped pages to physical storage.
+    /// </summary>
+    public void Flush()
+    {
+        _accessor?.Flush();
+    }
+
+    /// <summary>
     /// Executes a Single-Pass Fused Search across quantized vectors, Ebbinghaus decay, cognitive metrics, and graph proximity.
     /// Defers payload decompression until Top-K selection to achieve sub-millisecond latency.
+    /// Employs multi-threaded parallel partitioning for large-scale datasets (>4,000 records).
     /// </summary>
     public IReadOnlyList<AmeSearchResult> QueryFused(
         ReadOnlySpan<float> queryVector,
@@ -408,85 +417,180 @@ public sealed unsafe class AmeContainer : IDisposable
         Quantizer.Normalize(normalizedQuery);
 
         uint currentTimestamp = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var candidateHeap = new PriorityQueue<AmeCandidate, float>();
-
         var recordsPtr = (AmeCognitiveRecord*)(_basePointer + _cognitiveArrayOffset);
         byte* vectorsBase = _basePointer + _vectorIndexOffset + sizeof(AmeVectorHeader);
+        int dim = Dimension;
 
-        for (uint i = 0; i < totalRecords; i++)
+        uint[]? activeSymbolsArray = activeSymbols.IsEmpty ? null : activeSymbols.ToArray();
+
+        fixed (float* qPtr = normalizedQuery)
         {
-            ref AmeCognitiveRecord rec = ref recordsPtr[i];
-
-            // Tier filtering
-            if (((1 << rec.Tier) & targetTierMask) == 0)
-                continue;
-
-            // Read vector scale, offset, and quantized values
-            byte* vPtr = vectorsBase + (rec.VectorIndexRef * (Dimension + 8));
-            float scale = *(float*)vPtr;
-            float offset = *(float*)(vPtr + 4);
-            var targetSq8 = new ReadOnlySpan<sbyte>(vPtr + 8, Dimension);
-
-            // Compute vector cosine similarity
-            float vecSim = SimdVectorEngine.CosineSimilaritySq8(
-                normalizedQuery,
-                targetSq8,
-                scale,
-                offset,
-                0.0f);
-
-            // Compute Ebbinghaus retention
-            float retention = AmeScoringEngine.ComputeRetention(rec, currentTimestamp);
-
-            // Compute graph proximity if active symbols provided
-            float graphProx = activeSymbols.IsEmpty ? 0.0f : Graph.ComputeProximity(rec.MemoryId, activeSymbols);
-
-            // Compute composite score in single-pass
-            float compositeScore = AmeScoringEngine.ComputeCompositeScore(
-                vecSim,
-                rec,
-                currentTimestamp,
-                graphProximity: graphProx,
-                weights: weights);
-
-            if (compositeScore < minScore)
-                continue;
-
-            var candidate = new AmeCandidate(
-                MemoryIndex: i,
-                MemoryId: rec.MemoryId,
-                Tier: rec.Tier,
-                CompositeScore: compositeScore,
-                VectorSimilarity: vecSim,
-                RecencyRetention: retention,
-                GraphProximity: graphProx,
-                Importance: rec.Importance,
-                Confidence: rec.Confidence,
-                AccessFrequency: rec.AccessFrequency,
-                PayloadRef: rec.PayloadRef
-            );
-
-            // Maintain Top-K min-heap (without payload decompression overhead)
-            if (candidateHeap.Count < topK)
+            if (totalRecords < 4000)
             {
-                candidateHeap.Enqueue(candidate, compositeScore);
+                // Single-threaded fast path for small/medium datasets
+                var candidateHeap = new PriorityQueue<AmeCandidate, float>();
+
+                for (uint i = 0; i < totalRecords; i++)
+                {
+                    ref AmeCognitiveRecord rec = ref recordsPtr[i];
+
+                    // Tier filtering
+                    if (((1 << rec.Tier) & targetTierMask) == 0)
+                        continue;
+
+                    byte* vPtr = vectorsBase + (rec.VectorIndexRef * (dim + 8));
+                    float scale = *(float*)vPtr;
+                    float offset = *(float*)(vPtr + 4);
+                    sbyte* tPtr = (sbyte*)(vPtr + 8);
+
+                    // 2x Unrolled direct pointer SIMD dot product
+                    float vecSim = SimdVectorEngine.CosineSimilaritySq8(qPtr, tPtr, dim, scale, offset);
+
+                    // Ebbinghaus retention
+                    float retention = AmeScoringEngine.ComputeRetention(rec, currentTimestamp);
+
+                    // Graph proximity
+                    float graphProx = activeSymbolsArray == null ? 0.0f : Graph.ComputeProximity(rec.MemoryId, activeSymbolsArray);
+
+                    // Composite score
+                    float compositeScore = AmeScoringEngine.ComputeCompositeScore(
+                        vecSim,
+                        rec,
+                        currentTimestamp,
+                        graphProximity: graphProx,
+                        weights: weights);
+
+                    if (compositeScore < minScore)
+                        continue;
+
+                    var candidate = new AmeCandidate(
+                        MemoryIndex: i,
+                        MemoryId: rec.MemoryId,
+                        Tier: rec.Tier,
+                        CompositeScore: compositeScore,
+                        VectorSimilarity: vecSim,
+                        RecencyRetention: retention,
+                        GraphProximity: graphProx,
+                        Importance: rec.Importance,
+                        Confidence: rec.Confidence,
+                        AccessFrequency: rec.AccessFrequency,
+                        PayloadRef: rec.PayloadRef
+                    );
+
+                    if (candidateHeap.Count < topK)
+                    {
+                        candidateHeap.Enqueue(candidate, compositeScore);
+                    }
+                    else if (compositeScore > candidateHeap.Peek().CompositeScore)
+                    {
+                        candidateHeap.Dequeue();
+                        candidateHeap.Enqueue(candidate, compositeScore);
+                    }
+                }
+
+                return HydrateTopK(candidateHeap);
             }
-            else if (compositeScore > candidateHeap.Peek().CompositeScore)
+            else
             {
-                candidateHeap.Dequeue();
-                candidateHeap.Enqueue(candidate, compositeScore);
+                // Parallel multi-core partitioned scan for large datasets (>4,000 records)
+                var localHeaps = new System.Collections.Concurrent.ConcurrentBag<PriorityQueue<AmeCandidate, float>>();
+
+                Parallel.ForEach(
+                    System.Collections.Concurrent.Partitioner.Create(0, (int)totalRecords, Math.Max(2048, (int)totalRecords / (Environment.ProcessorCount * 2))),
+                    () => new PriorityQueue<AmeCandidate, float>(),
+                    (range, state, localHeap) =>
+                    {
+                        fixed (float* localQPtr = normalizedQuery)
+                        {
+                            for (int i = range.Item1; i < range.Item2; i++)
+                            {
+                                ref AmeCognitiveRecord rec = ref recordsPtr[i];
+
+                                if (((1 << rec.Tier) & targetTierMask) == 0)
+                                    continue;
+
+                                byte* vPtr = vectorsBase + (rec.VectorIndexRef * (dim + 8));
+                                float scale = *(float*)vPtr;
+                                float offset = *(float*)(vPtr + 4);
+                                sbyte* tPtr = (sbyte*)(vPtr + 8);
+
+                                float vecSim = SimdVectorEngine.CosineSimilaritySq8(localQPtr, tPtr, dim, scale, offset);
+                                float retention = AmeScoringEngine.ComputeRetention(rec, currentTimestamp);
+                                float graphProx = activeSymbolsArray == null ? 0.0f : Graph.ComputeProximity(rec.MemoryId, activeSymbolsArray);
+
+                                float compositeScore = AmeScoringEngine.ComputeCompositeScore(
+                                    vecSim,
+                                    rec,
+                                    currentTimestamp,
+                                    graphProximity: graphProx,
+                                    weights: weights);
+
+                                if (compositeScore < minScore)
+                                    continue;
+
+                                var candidate = new AmeCandidate(
+                                    MemoryIndex: (uint)i,
+                                    MemoryId: rec.MemoryId,
+                                    Tier: rec.Tier,
+                                    CompositeScore: compositeScore,
+                                    VectorSimilarity: vecSim,
+                                    RecencyRetention: retention,
+                                    GraphProximity: graphProx,
+                                    Importance: rec.Importance,
+                                    Confidence: rec.Confidence,
+                                    AccessFrequency: rec.AccessFrequency,
+                                    PayloadRef: rec.PayloadRef
+                                );
+
+                                if (localHeap.Count < topK)
+                                {
+                                    localHeap.Enqueue(candidate, compositeScore);
+                                }
+                                else if (compositeScore > localHeap.Peek().CompositeScore)
+                                {
+                                    localHeap.Dequeue();
+                                    localHeap.Enqueue(candidate, compositeScore);
+                                }
+                            }
+                        }
+                        return localHeap;
+                    },
+                    localHeap => localHeaps.Add(localHeap)
+                );
+
+                // Merge thread-local min-heaps into global Top-K
+                var globalHeap = new PriorityQueue<AmeCandidate, float>();
+                foreach (var heap in localHeaps)
+                {
+                    while (heap.Count > 0)
+                    {
+                        var c = heap.Dequeue();
+                        if (globalHeap.Count < topK)
+                        {
+                            globalHeap.Enqueue(c, c.CompositeScore);
+                        }
+                        else if (c.CompositeScore > globalHeap.Peek().CompositeScore)
+                        {
+                            globalHeap.Dequeue();
+                            globalHeap.Enqueue(c, c.CompositeScore);
+                        }
+                    }
+                }
+
+                return HydrateTopK(globalHeap);
             }
         }
+    }
 
-        // Extract ordered candidates (lowest to highest from min-heap)
+    private IReadOnlyList<AmeSearchResult> HydrateTopK(PriorityQueue<AmeCandidate, float> candidateHeap)
+    {
         var orderedCandidates = new List<AmeCandidate>(candidateHeap.Count);
         while (candidateHeap.Count > 0)
         {
             orderedCandidates.Add(candidateHeap.Dequeue());
         }
-        orderedCandidates.Reverse(); // Now highest score is first
+        orderedCandidates.Reverse();
 
-        // Hydrate and decompress payload ONLY for the final Top-K items
         var results = new List<AmeSearchResult>(orderedCandidates.Count);
         foreach (var c in orderedCandidates)
         {

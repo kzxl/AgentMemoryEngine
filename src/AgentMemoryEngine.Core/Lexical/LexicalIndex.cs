@@ -10,6 +10,7 @@ public sealed class LexicalIndex
 {
     private readonly Dictionary<string, List<(uint MemoryId, uint TermFreq)>> _postings = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<uint, uint> _docLengths = [];
+    private long _totalDocLength = 0;
     private double _avgDocLength = 0.0;
     private static readonly Regex TokenRegex = new(@"\b[A-Za-z0-9_]{2,}\b", RegexOptions.Compiled);
 
@@ -37,6 +38,8 @@ public sealed class LexicalIndex
         var tokens = Tokenize(payload);
         uint docLen = (uint)tokens.Count;
         _docLengths[memoryId] = docLen;
+        _totalDocLength += docLen;
+        _avgDocLength = _docLengths.Count > 0 ? (double)_totalDocLength / _docLengths.Count : 0.0;
 
         // Calculate term frequencies in document
         var termCounts = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
@@ -54,11 +57,6 @@ public sealed class LexicalIndex
             }
             list.Add((memoryId, count));
         }
-
-        // Recompute average document length
-        long totalLen = 0;
-        foreach (var len in _docLengths.Values) totalLen += len;
-        _avgDocLength = _docLengths.Count > 0 ? (double)totalLen / _docLengths.Count : 0.0;
     }
 
     /// <summary>
