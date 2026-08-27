@@ -1,0 +1,21 @@
+{
+  "name": "@agent-memory/engine",
+  "version": "1.0.0",
+  "description": "Official TypeScript & Node.js SDK for Agent Memory Engine (AME)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "memory",
+    "database",
+    "vector",
+    "cognitive",
+    "llm"
+  ],
+  "author": "Agent Memory Engine Contributors",
+  "license": "MIT"
+}

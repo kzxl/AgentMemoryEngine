@@ -69,6 +69,10 @@ public sealed class ConsolidationWorker
             }
         }
 
+        // 2. Run DBSCAN Semantic Induction
+        var clustering = new ClusteringEngine(_container);
+        var inductionResults = clustering.InduceSemanticRules();
+
         sw.Stop();
 
         return new AmeConsolidationReport
@@ -76,7 +80,7 @@ public sealed class ConsolidationWorker
             TotalRecordsScanned = totalScanned,
             ActiveRecordsRetained = retained,
             ColdRecordsPruned = pruned,
-            SemanticRulesSynthesized = 0,
+            SemanticRulesSynthesized = (uint)inductionResults.Count,
             SweepDurationMs = sw.Elapsed.TotalMilliseconds
         };
     }

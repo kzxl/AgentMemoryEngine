@@ -493,6 +493,24 @@ public sealed unsafe class AmeContainer : IDisposable
     }
 
     /// <summary>
+    /// Retrieves and dequantizes the stored vector for a given Memory ID.
+    /// </summary>
+    public bool TryGetVector(uint memoryId, Span<float> destination)
+    {
+        if (memoryId == 0 || memoryId > RecordCount || destination.Length < Dimension)
+            return false;
+
+        var rec = *((AmeCognitiveRecord*)(_basePointer + _cognitiveArrayOffset + ((memoryId - 1) * sizeof(AmeCognitiveRecord))));
+        byte* vPtr = _basePointer + _vectorIndexOffset + sizeof(AmeVectorHeader) + (rec.VectorIndexRef * (Dimension + 8));
+        float scale = *(float*)vPtr;
+        float offset = *(float*)(vPtr + 4);
+        var targetSq8 = new ReadOnlySpan<sbyte>(vPtr + 8, Dimension);
+
+        Quantizer.DequantizeSQ8(targetSq8, destination, scale, offset);
+        return true;
+    }
+
+    /// <summary>
     /// Retrieves a single record by its Memory ID.
     /// </summary>
     public bool TryGetRecord(uint memoryId, out AmeCognitiveRecord record, out string payload)

@@ -78,4 +78,22 @@ public static class Quantizer
             destination[i] = (source[i] + 127) * scale + offset;
         }
     }
+
+    /// <summary>
+    /// Generates a normalized pseudo-embedding from text for testing and fallback without external dependencies.
+    /// </summary>
+    public static float[] CreateDeterministicVector(string text, int dimension)
+    {
+        float[] vector = new float[dimension];
+        var hash = text.GetHashCode();
+        var rng = new Random(hash);
+
+        for (int i = 0; i < dimension; i++)
+        {
+            vector[i] = (float)(rng.NextDouble() * 2.0 - 1.0);
+        }
+
+        Normalize(vector);
+        return vector;
+    }
 }
