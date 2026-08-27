@@ -95,5 +95,7 @@ public enum AmeEdgeType : byte
     DependsOn   = 1,
     FixesBugIn  = 2,
     DerivedFrom = 3,
-    Implements  = 4
+    Implements  = 4,
+    FollowedBy  = 5,
+    RelatedTo   = 6
 }

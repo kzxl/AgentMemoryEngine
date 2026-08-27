@@ -65,6 +65,11 @@ public sealed unsafe class AmeContainer : IDisposable
     public AgentMemoryEngine.Core.Graph.CsrGraph Graph { get; } = new();
 
     /// <summary>
+    /// In-memory inverted lexical BM25 index for keyword search.
+    /// </summary>
+    public AgentMemoryEngine.Core.Lexical.LexicalIndex LexicalIndex { get; } = new();
+
+    /// <summary>
     /// Adds a relationship edge between two nodes in the graph.
     /// </summary>
     public void AddRelationship(uint sourceNodeId, uint targetNodeId, AmeEdgeType edgeType, byte weight = 100)
@@ -240,6 +245,15 @@ public sealed unsafe class AmeContainer : IDisposable
 
         // Read Vector Header
         _vectorHeader = *(AmeVectorHeader*)(_basePointer + _vectorIndexOffset);
+
+        // Populate Lexical Index for all existing records
+        for (uint id = 1; id <= RecordCount; id++)
+        {
+            if (TryGetRecord(id, out _, out string payload))
+            {
+                LexicalIndex.IndexDocument(id, payload);
+            }
+        }
     }
 
     /// <summary>
@@ -328,6 +342,7 @@ public sealed unsafe class AmeContainer : IDisposable
             }
 
             _accessor?.Flush();
+            LexicalIndex.IndexDocument(newMemoryId, payload);
             return newMemoryId;
         }
     }
